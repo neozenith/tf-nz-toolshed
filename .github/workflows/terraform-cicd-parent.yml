@@ -1,0 +1,74 @@
+name: Terraform CICD
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Select environment to deploy'
+        required: true
+        type: choice
+        options:
+          - test
+          - prod
+      confirm_deployment:
+        description: 'Confirm Production Deployment'
+        required: true
+        type: boolean
+  push:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'terraform/**'
+
+jobs:
+
+  backend-validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v3
+      - uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: terraform/.python-version
+      - name: "🔍 Terraform Validate Backend Configuration 🔍"
+        run: uv run scripts/tf-stack.py validate
+      - name: "🔍 Validate List of Stacks are updated in Github Action 🔍"
+        run: uv run scripts/tf-stack.py gha-check
+
+  tf-format-check:
+    defaults:
+      run:
+        working-directory: ./terraform
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: hashicorp/setup-terraform@v3
+      
+      - name: "✨ Terraform Format ✨"
+        run: terraform fmt -check -recursive
+
+      - uses: terraform-linters/setup-tflint@v4
+      - name: "✨ TFLint ✨"
+        run: tflint --recursive -f compact
+
+  tf-per-stack:
+    needs:
+      - backend-validate
+      - tf-format-check
+    # Central Spot to iterate over all stacks
+    strategy:
+      matrix:
+        stack: []
+    uses: ./.github/workflows/terraform-cicd-per-stack.yml
+    with:
+      stack: ${{ matrix.stack }}
+      target_env: ${{ inputs.environment }}
+    secrets: inherit

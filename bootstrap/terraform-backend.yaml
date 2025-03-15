@@ -1,0 +1,117 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: |
+  This Cloudformation template creates an S3 bucket and DynamoDB table suitable
+  for a Terraform S3 State Backend. Using this template avoids the problem of
+  needing to use a Terraform module to create a state backend before you have a
+  state backend for that module.
+
+Parameters:
+  Name:
+    Description: |
+      Name of the S3 bucket, DynamoDB table, and IAM role;
+      Defaults to "terraform-state-AWS_ACCOUNT_ID"
+    Default: ""
+    Type: String
+  NoncurrentVersionExpirationInDays:
+    Description: Number of days after which older state versions are purged
+    Default: 1
+    Type: Number
+  ExecutionPrincipal:
+    Description: |
+      IAM principal allowed to assume the state management for running
+      Terraform; defaults to the current AWS account.
+    Default: ""
+    Type: String
+
+Conditions:
+  GenerateNames: !Equals [!Ref Name, ""]
+
+Resources:
+
+  LockTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: LockID
+        AttributeType: S
+      KeySchema:
+      - AttributeName: LockID
+        KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      TableName: !Ref StateBucket
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W78
+            reason: Terraform lock tables do not need to be backed up
+      Description: DynamoDB table to lock Terraform
+
+  StateBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      BucketName: !If
+      - GenerateNames
+      - !Sub "terraform-state-${AWS::AccountId}"
+      - !Ref Name
+      LifecycleConfiguration:
+        Rules:
+        - Id: ExpireOldVersions
+          NoncurrentVersionExpirationInDays: !Ref NoncurrentVersionExpirationInDays
+          Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+    Metadata:
+      Description: Bucket containing Terraform state
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: Access logs are managed via Cloudtrail
+
+
+
+Outputs:
+  LockTableName:
+    Description: Name of the DynamoDB table used to lock Terraform state
+    Value: !Ref LockTable
+  Region:
+    Description: Region in which the S3 state backend resources are created
+    Value: !Ref AWS::Region
+  StateBucketName:
+    Description: Name of the S3 bucket containing Terraform state
+    Value: !Ref StateBucket
+  TerraformBackendConfig:
+    Description: Terraform backend configuration for S3
+    Value: !Join
+      - "\n"
+      - - "terraform {"
+        - "  backend \"s3\" {"
+        - "    bucket         = \""
+        - !Ref StateBucket
+        - "\""
+        - "    key            = \"<project_name>/<stack_name>/terraform.tfstate\""
+        - "    region         = \""
+        - !Ref AWS::Region
+        - "\""
+        - "    dynamodb_table = \""
+        - !Ref LockTable
+        - "\""
+        - "    encrypt        = true"
+        - "  }"
+        - "}"

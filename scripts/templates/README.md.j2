@@ -1,0 +1,17 @@
+# {{ stack_name }}
+
+## Quickstart
+
+```sh
+terraform -chdir=stacks/{{ stack_name }}/ init -backend-config=./backends/<env>.config -reconfigure
+terraform -chdir=stacks/{{ stack_name }}/ plan -var environment=<env>
+terraform -chdir=stacks/{{ stack_name }}/ apply -var environment=<env>
+```
+
+or
+
+```sh
+uv run scripts/tf-stack.py init {{ stack_name }} <env>
+uv run scripts/tf-stack.py plan {{ stack_name }} <env>
+uv run scripts/tf-stack.py apply {{ stack_name }} <env>
+```

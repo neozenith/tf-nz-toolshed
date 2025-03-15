@@ -1,0 +1,233 @@
+name: TF Stack
+
+on:
+  workflow_call:
+    inputs:
+      stack:
+        required: true
+        type: string
+      target_env:
+        required: false
+        type: string
+        default: dev
+
+permissions:
+  id-token: write # Needed for aws-actions/configure-aws-credentials@v4
+  contents: read
+
+# Per (Workflow,branch,stack) combination, only one github action job will have preference. This prevents `push` and `pull_request` from running concurrently.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.event.ref }}-${{ inputs.stack }}
+  # I have chosen to NOT cancel jobs when concurrency groups are full.
+  # This is to allow inflight TF Locks to more likely complete and not fail to release a lock, and reduce manual interventions.
+  #
+  # Push events are ONLY on main branch and so duplicate triggers of the same feature branch for push and pull_request are not possible.
+  # Pull Requests are partitioned by the branch name.
+  cancel-in-progress: false
+
+env:
+  STACK: ${{ inputs.stack }}
+  STACK_PATH: stacks/${{ inputs.stack }}/
+  ENV_TARGET: ${{ inputs.target_env }}
+
+jobs:
+
+  ghcontext:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump GitHub context
+        env:
+          GITHUB_CONTEXT: ${{ toJSON(github) }}
+        run: echo "$GITHUB_CONTEXT"
+  
+  tf-plan-check:
+    # Run a plan check on all environments on this stack only on PRs, even if draft. Find issues early.
+    defaults:
+      run:
+        working-directory: ./terraform
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        envs: [dev, test, prod]
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: hashicorp/setup-terraform@v3
+      - uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: terraform/.python-version
+
+      - name: "🔐	Configure AWS credentials - DEV 🔐"
+        if: matrix.envs == 'dev'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.TERRAFORM_AWS_ROLE_ARN_DEV }}
+          aws-region: ap-southeast-2
+
+      - name: "🔐	Configure AWS credentials - TEST 🔐"
+        if: matrix.envs == 'test'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.TERRAFORM_AWS_ROLE_ARN_TEST }}
+          aws-region: ap-southeast-2
+
+      - name: "🔐	Configure AWS credentials - PROD 🔐"
+        if: matrix.envs == 'prod'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.TERRAFORM_AWS_ROLE_ARN_PROD }}
+          aws-region: ap-southeast-2
+
+      - name: "📍 Terraform Plan ${{ inputs.stack }}/${{ matrix.envs }} 📍"
+        run: |
+          uv run scripts/tf-stack.py init ${{ inputs.stack }} ${{ matrix.envs }}
+          uv run scripts/tf-stack.py plan ${{ inputs.stack }} ${{ matrix.envs }}
+
+      
+  tf-apply-dev:
+    # Trigger on a PR that is not in draft.
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft 
+    runs-on: ubuntu-latest
+    needs: [tf-plan-check]
+    defaults:
+      run:
+        working-directory: ./terraform
+    env:
+      ENV_TARGET: dev
+      OUTPUT_FILE: tf-outputs-${{inputs.stack }}-dev.json
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: hashicorp/setup-terraform@v3
+      - uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: terraform/.python-version
+
+      - name: "🔐	Configure AWS credentials - DEV 🔐"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.TERRAFORM_AWS_ROLE_ARN_DEV }}
+          aws-region: "ap-southeast-2"
+
+      - name: "🚀 Terraform Apply ${{ inputs.stack }}/dev 🚀"
+        run: |
+          uv run scripts/tf-stack.py init ${{ inputs.stack }} $ENV_TARGET
+          uv run scripts/tf-stack.py plan ${{ inputs.stack }} $ENV_TARGET
+          uv run scripts/tf-stack.py apply ${{ inputs.stack }} $ENV_TARGET
+
+          echo "Terraform Outputs:"
+          terraform -chdir=$STACK_PATH output
+          echo "Saving Terraform Outputs to $OUTPUT_FILE"
+          terraform -chdir=$STACK_PATH output -json > $OUTPUT_FILE
+      
+      - name: "📦 Upload Terraform Output Artifacts 📦"
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs-${{ inputs.stack }}-dev
+          path: "**/tf-outputs-*.json"
+          retention-days: 5
+          overwrite: true
+
+  tf-apply-test:
+    # Merge changes to main OR manual deploy where target_env is test
+    # The manual deploy is to allow for redeploying to test if the target AWS was not configured correctly. (eg IAM Permissions for Github OIDC Role)
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') || (
+        github.event_name == 'workflow_dispatch' && 
+        github.event.inputs.confirm_deployment == 'true' && 
+        github.event.inputs.environment == 'test' && 
+        github.ref == 'refs/heads/main'
+      )
+    runs-on: ubuntu-latest
+    needs: [tf-plan-check]
+    defaults:
+      run:
+        working-directory: ./terraform
+    env:
+      ENV_TARGET: test
+      OUTPUT_FILE: tf-outputs-${{ inputs.stack }}-test.json
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: hashicorp/setup-terraform@v3
+      - uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: terraform/.python-version
+
+      - name: "🔐	Configure AWS credentials - TEST 🔐"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.TERRAFORM_AWS_ROLE_ARN_TEST }}
+          aws-region: "ap-southeast-2"
+
+      - name: "🚀 Terraform Apply ${{ inputs.stack }}/test 🚀"
+        run: |
+          uv run scripts/tf-stack.py init ${{ inputs.stack }} $ENV_TARGET
+          uv run scripts/tf-stack.py plan ${{ inputs.stack }} $ENV_TARGET
+          uv run scripts/tf-stack.py apply ${{ inputs.stack }} $ENV_TARGET
+
+          echo "Terraform Outputs:"
+          terraform -chdir=$STACK_PATH output
+          echo "Saving Terraform Outputs to $OUTPUT_FILE"
+          terraform -chdir=$STACK_PATH output -json > $OUTPUT_FILE
+      
+      - name: "📦 Upload Terraform Output Artifacts 📦"
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs-${{ inputs.stack }}-test
+          path: "**/tf-outputs-*.json"
+          retention-days: 5
+          overwrite: true
+      
+  tf-apply-prod:
+    # Only a manual deploy on main branch
+    if: | 
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.confirm_deployment == 'true' && 
+      github.event.inputs.environment == 'prod' && 
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: [tf-plan-check]
+    defaults:
+      run:
+        working-directory: ./terraform
+    env:
+      ENV_TARGET: prod
+      OUTPUT_FILE: tf-outputs-${{inputs.stack }}-prod.json
+    
+    steps:
+      - uses: actions/checkout@v3
+      - uses: hashicorp/setup-terraform@v3
+      - uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: terraform/.python-version
+
+      - name: "🔐	Configure AWS credentials - PROD 🔐"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.TERRAFORM_AWS_ROLE_ARN_PROD }}
+          aws-region: "ap-southeast-2"
+
+      - name: "🚀 Terraform Apply ${{ inputs.stack }}/prod 🚀"
+        run: |
+          uv run scripts/tf-stack.py init ${{ inputs.stack }} $ENV_TARGET
+          uv run scripts/tf-stack.py plan ${{ inputs.stack }} $ENV_TARGET
+          uv run scripts/tf-stack.py apply ${{ inputs.stack }} $ENV_TARGET
+
+          echo "Terraform Outputs:"
+          terraform -chdir=$STACK_PATH output
+          echo "Saving Terraform Outputs to $OUTPUT_FILE"
+          terraform -chdir=$STACK_PATH output -json > $OUTPUT_FILE
+      
+      - name: "📦 Upload Terraform Output Artifacts 📦"
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs-${{ inputs.stack }}-prod
+          path: "**/tf-outputs-*.json"
+          retention-days: 5
+          overwrite: true
+

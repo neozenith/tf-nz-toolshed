@@ -1,0 +1,17 @@
+[project]
+name = "tf-nz-toolshed"
+version = "0.1.0"
+description = "NeoZenith's Terraform Toolshed"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3>=1.36.8",
+    "jinja2>=3.1.5",
+    "ruamel-yaml>=0.18.10",
+]
+
+[dependency-groups]
+dev = [
+    "md-toc>=9.0.0",
+    "pre-commit>=4.1.0",
+]

@@ -1,0 +1,10 @@
+environments:
+  dev:
+    aws_account_id: 389956346255
+    
+  test:
+    aws_account_id: 675457518233
+    
+  prod:
+    aws_account_id: 999610420645
+    

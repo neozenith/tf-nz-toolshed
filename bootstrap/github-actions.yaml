@@ -1,0 +1,166 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Github Actions configuration - OIDC IAM IdP Federation
+
+Parameters:
+  GitHubOrg:
+    Description: Name of GitHub organization/user (case sensitive)
+    Type: String
+  RepositoryName:
+    Description: Name of GitHub repository (case sensitive)
+    Type: String
+  OIDCProviderArn:
+    Description: Arn for the GitHub OIDC Provider.
+    Default: ""
+    Type: String
+  OIDCAudience:
+    Description: Audience supplied to configure-aws-credentials.
+    Default: "sts.amazonaws.com"
+    Type: String
+
+Conditions:
+  CreateOIDCProvider: !Equals
+    - !Ref OIDCProviderArn
+    - ""
+
+Resources:
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRoleWithWebIdentity
+            Principal:
+              Federated: !If
+                - CreateOIDCProvider
+                - !Ref GithubOidc
+                - !Ref OIDCProviderArn
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: !Ref OIDCAudience
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOrg}/${RepositoryName}:*
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:terraform-user
+              
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/PowerUserAccess
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+      Policies:
+        - PolicyName: "TerraformStateManagementPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: TerraformExtraPermissionsToManageIAMRoles
+                Effect: Allow
+                Action:
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:GetPolicyVersion
+                  - iam:GetAccountPasswordPolicy
+                  - iam:ListRoleTags
+                  - iam:GetMFADevice
+                  - iam:ListServerCertificates
+                  - iam:GenerateServiceLastAccessedDetails
+                  - iam:CreateRole
+                  - iam:AttachRolePolicy
+                  - iam:ListServiceSpecificCredentials
+                  - iam:PutRolePolicy
+                  - iam:ListSigningCertificates
+                  - iam:ListVirtualMFADevices
+                  - iam:ListSSHPublicKeys
+                  - iam:SimulateCustomPolicy
+                  - iam:DetachRolePolicy
+                  - iam:SimulatePrincipalPolicy
+                  - iam:GetAccountEmailAddress
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListOpenIDConnectProviderTags
+                  - iam:ListSAMLProviderTags
+                  - iam:ListRolePolicies
+                  - iam:GetAccountAuthorizationDetails
+                  - iam:GetCredentialReport
+                  - iam:ListPolicies
+                  - iam:GetServerCertificate
+                  - iam:GetRole
+                  - iam:ListSAMLProviders
+                  - iam:GetPolicy
+                  - iam:GetAccessKeyLastUsed
+                  - iam:ListEntitiesForPolicy
+                  - iam:ListOrganizationsFeatures
+                  - iam:DeleteRole
+                  - iam:UpdateRoleDescription
+                  - iam:TagPolicy
+                  - iam:GetUserPolicy
+                  - iam:ListGroupsForUser
+                  - iam:GetAccountName
+                  - iam:GetGroupPolicy
+                  - iam:GetOpenIDConnectProvider
+                  - iam:ListSTSRegionalEndpointsStatus
+                  - iam:GetRolePolicy
+                  - iam:GetAccountSummary
+                  - iam:GenerateCredentialReport
+                  - iam:UntagRole
+                  - iam:GetServiceLastAccessedDetailsWithEntities
+                  - iam:TagRole
+                  - iam:ListPoliciesGrantingServiceAccess
+                  - iam:DeletePolicy
+                  - iam:ListInstanceProfileTags
+                  - iam:ListMFADevices
+                  - iam:GetServiceLastAccessedDetails
+                  - iam:GetGroup
+                  - iam:GetContextKeysForPrincipalPolicy
+                  - iam:GetOrganizationsAccessReport
+                  - iam:GetServiceLinkedRoleDeletionStatus
+                  - iam:ListInstanceProfilesForRole
+                  - iam:GenerateOrganizationsAccessReport
+                  - iam:DeleteRolePolicy
+                  - iam:GetCloudFrontPublicKey
+                  - iam:ListAttachedUserPolicies
+                  - iam:ListAttachedGroupPolicies
+                  - iam:ListPolicyTags
+                  - iam:CreatePolicyVersion
+                  - iam:GetSAMLProvider
+                  - iam:ListAccessKeys
+                  - iam:GetInstanceProfile
+                  - iam:ListGroupPolicies
+                  - iam:ListCloudFrontPublicKeys
+                  - iam:GetSSHPublicKey
+                  - iam:ListRoles
+                  - iam:ListUserPolicies
+                  - iam:ListInstanceProfiles
+                  - iam:CreatePolicy
+                  - iam:GetContextKeysForCustomPolicy
+                  - iam:ListPolicyVersions
+                  - iam:ListOpenIDConnectProviders
+                  - iam:ListServerCertificateTags
+                  - iam:ListAccountAliases
+                  - iam:UntagPolicy
+                  - iam:ListUsers
+                  - iam:UpdateRole
+                  - iam:GetUser
+                  - iam:ListGroups
+                  - iam:ListMFADeviceTags
+                  - iam:GetLoginProfile
+                  - iam:DeletePolicyVersion
+                  - iam:SetDefaultPolicyVersion
+                  - iam:ListUserTags
+                Resource: "*" # This is the resource that the policy will be applied to
+
+  GithubOidc:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateOIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+
+Outputs:
+  Role:
+    Value: !GetAtt Role.Arn
