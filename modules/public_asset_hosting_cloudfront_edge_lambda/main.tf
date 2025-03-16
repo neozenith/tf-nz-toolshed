@@ -103,8 +103,8 @@ resource "aws_s3_bucket_policy" "public_assets" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "AllowCloudFrontServicePrincipal"
-        Effect    = "Allow"
+        Sid    = "AllowCloudFrontServicePrincipal"
+        Effect = "Allow"
         Principal = {
           Service = "cloudfront.amazonaws.com"
         }
@@ -154,8 +154,10 @@ resource "aws_iam_role_policy" "lambda_edge" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = ["arn:aws:logs:*:*:*"]
-      }
+        Resource = [
+          "arn:aws:logs:*:*:log-group:/aws/lambda/${aws_lambda_function.auth_check.function_name}*:*",
+          "arn:aws:logs:*:*:log-group:/aws/lambda/us-east-1.${aws_lambda_function.auth_check.function_name}*:*"
+      ] }
     ]
   })
 }
@@ -166,17 +168,26 @@ provider "aws" {
 }
 
 resource "aws_lambda_function" "auth_check" {
-  provider         = aws.us_east_1  # Lambda@Edge must be in us-east-1
+  provider         = aws.us_east_1 # Lambda@Edge must be in us-east-1
   filename         = "${path.module}/functions/viewer-request/auth.zip"
+  source_code_hash = filebase64sha256("${path.module}/functions/viewer-request/auth.zip")
   function_name    = "${var.project_name}-${var.environment}-auth-check"
-  role            = aws_iam_role.lambda_edge.arn
-  handler         = "auth.lambda_handler"
-  runtime         = "python3.12"
-  publish         = true  # Required for Lambda@Edge
+  role             = aws_iam_role.lambda_edge.arn
+  handler          = "auth.lambda_handler"
+  runtime          = "python3.12"
+  publish          = true # Required for Lambda@Edge
 
   tags = local.default_tags
 }
 
+
+resource "aws_cloudwatch_log_group" "lambda_edge" {
+  provider          = aws.us_east_1 # Log group must be in us-east-1 for Lambda@Edge
+  name              = "/aws/lambda/${aws_lambda_function.auth_check.function_name}"
+  retention_in_days = 14 # Adjust retention as needed
+
+  tags = local.default_tags
+}
 
 resource "aws_cloudfront_origin_access_control" "s3_oac" {
   name                              = "${var.project_name}-${var.environment}-oac-lmbdaedge"
@@ -188,7 +199,7 @@ resource "aws_cloudfront_origin_access_control" "s3_oac" {
 
 resource "aws_cloudfront_distribution" "s3_distribution" {
   enabled             = true
-  is_ipv6_enabled    = true
+  is_ipv6_enabled     = true
   default_root_object = "index.html"
   price_class         = "PriceClass_100"
   tags                = local.default_tags
@@ -204,7 +215,7 @@ resource "aws_cloudfront_distribution" "s3_distribution" {
     cached_methods         = ["GET", "HEAD"]
     target_origin_id       = "S3Origin"
     viewer_protocol_policy = "redirect-to-https"
-    compress              = true
+    compress               = true
 
     forwarded_values {
       query_string = false
