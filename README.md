@@ -2,6 +2,8 @@
 
 Collection of my personal terraform practices and modules so I need to reinvent less wheels.
 
+## Public Asset Hosting - 3 Flavours
+
 ![Hosting Static Assets Publicly](static_assets/public-asset-hosting.png)
 
 <!--TOC-->
