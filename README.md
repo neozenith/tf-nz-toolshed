@@ -6,6 +6,8 @@ Collection of my personal terraform practices and modules so I need to reinvent 
 
 ![Hosting Static Assets Publicly](static_assets/public-asset-hosting.png)
 
+![Referer Testing](https://d3vcy7wygnf0wa.cloudfront.net/public-asset-hosting.png)
+
 <!--TOC-->
 
 <!--TOC-->
