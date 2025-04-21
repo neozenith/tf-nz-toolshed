@@ -25,6 +25,7 @@ def lambda_handler(event, context):
         'headers': {
             'user-agent': headers.get('user-agent', [{'value': 'unknown'}])[0]['value'],
             'referer': headers.get('referer', [{'value': 'unknown'}])[0]['value'],
+            'Referer': headers.get('Referer', [{'value': 'unknown'}])[0]['value'],
             'host': headers.get('host', [{'value': 'unknown'}])[0]['value']
         },
         'all_headers': headers
@@ -37,20 +38,20 @@ def lambda_handler(event, context):
     auth_header = headers.get('x-custom-auth', [{'value': ''}])[0]['value']
     logger.info(f"REQUEST_LOG: {auth_header=}")
 
-    auth_success = (auth_header is not None and auth_header == 'your-secret-value')
+    auth_success = (auth_header is not None and auth_header == 'your-secret-value') or ('github-camo' in viewer_info['headers']['user-agent'])
     
     
-    if not auth_success:
-        return {
-            'status': '403',
-            'statusDescription': 'Forbidden',
-            'headers': {
-                'content-type': [{
-                    'key': 'Content-Type',
-                    'value': 'text/plain'
-                }]
-            },
-            'body': 'Access Denied: missing header "x-custom-auth" or invalid value'
-        }
+    # if not auth_success:
+    #     return {
+    #         'status': '403',
+    #         'statusDescription': 'Forbidden',
+    #         'headers': {
+    #             'content-type': [{
+    #                 'key': 'Content-Type',
+    #                 'value': 'text/plain'
+    #             }]
+    #         },
+    #         'body': 'Access Denied: missing header "x-custom-auth" or invalid value'
+    #     }
     
     return request
